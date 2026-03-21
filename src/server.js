@@ -1,7 +1,9 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
 const { google } = require('googleapis');
 const { getWatchLaterVideos, addToWatchLater } = require('./transfer');
 
@@ -14,6 +16,51 @@ const SSE_POLL_MS = 300;
  * Each entry: { status: 'idle'|'running'|'done'|'error', events: Array, result: object|null }
  */
 const transferState = new Map();
+
+// ---------------------------------------------------------------------------
+// Rate limiters
+// ---------------------------------------------------------------------------
+/** Limits how often a single IP can initiate an OAuth flow or handle a callback. */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many authentication requests. Please try again later.',
+});
+
+/** Limits how often a single IP can start a transfer. */
+const transferLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many transfer requests. Please try again later.',
+});
+
+// ---------------------------------------------------------------------------
+// CSRF helpers (Synchronizer Token Pattern using express-session)
+// ---------------------------------------------------------------------------
+
+/** Generates a CSRF token and stores it in the session if one doesn't exist yet. */
+function ensureCsrfToken(req, _res, next) {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+  }
+  next();
+}
+
+/**
+ * Verifies that the `_csrf` field in the request body matches the session token.
+ * Returns 403 if the token is missing or invalid.
+ */
+function verifyCsrfToken(req, res, next) {
+  const token = req.body && req.body._csrf;
+  if (!token || token !== req.session.csrfToken) {
+    return res.status(403).send(htmlError('Invalid CSRF token. Please go back and try again.'));
+  }
+  next();
+}
 
 /**
  * Creates and configures the Express application.
@@ -51,17 +98,17 @@ function createApp(config) {
   // -------------------------------------------------------------------------
   // GET / — Main page
   // -------------------------------------------------------------------------
-  app.get('/', (req, res) => {
+  app.get('/', ensureCsrfToken, (req, res) => {
     const hasSource = !!req.session.sourceTokens;
     const hasDestination = !!req.session.destinationTokens;
     const state = transferState.get(req.session.id) || { status: 'idle', events: [] };
-    res.send(renderPage({ hasSource, hasDestination, state }));
+    res.send(renderPage({ hasSource, hasDestination, state, csrfToken: req.session.csrfToken }));
   });
 
   // -------------------------------------------------------------------------
   // GET /auth/:account — Start OAuth2 flow (account = "source" | "destination")
   // -------------------------------------------------------------------------
-  app.get('/auth/:account', (req, res) => {
+  app.get('/auth/:account', authLimiter, (req, res) => {
     const { account } = req.params;
     if (account !== 'source' && account !== 'destination') {
       return res.status(400).send('Invalid account type.');
@@ -78,7 +125,7 @@ function createApp(config) {
   // -------------------------------------------------------------------------
   // GET /oauth2callback — Google redirects here after user consents
   // -------------------------------------------------------------------------
-  app.get('/oauth2callback', async (req, res) => {
+  app.get('/oauth2callback', authLimiter, async (req, res) => {
     const { code, state, error } = req.query;
 
     if (error) {
@@ -107,7 +154,7 @@ function createApp(config) {
   // -------------------------------------------------------------------------
   // POST /disconnect/:account — Remove one account from session
   // -------------------------------------------------------------------------
-  app.post('/disconnect/:account', (req, res) => {
+  app.post('/disconnect/:account', verifyCsrfToken, (req, res) => {
     const { account } = req.params;
     if (account === 'source') {
       delete req.session.sourceTokens;
@@ -122,7 +169,7 @@ function createApp(config) {
   // -------------------------------------------------------------------------
   // POST /transfer — Kick off background transfer
   // -------------------------------------------------------------------------
-  app.post('/transfer', (req, res) => {
+  app.post('/transfer', transferLimiter, verifyCsrfToken, (req, res) => {
     if (!req.session.sourceTokens || !req.session.destinationTokens) {
       return res.redirect('/');
     }
@@ -233,21 +280,24 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function renderPage({ hasSource, hasDestination, state }) {
+function renderPage({ hasSource, hasDestination, state, csrfToken }) {
   const canTransfer = hasSource && hasDestination;
   const isRunning = state.status === 'running';
   const isDone = state.status === 'done';
   const isError = state.status === 'error';
   const hasResult = isDone && state.result;
+  const csrf = `<input type="hidden" name="_csrf" value="${escapeHtml(csrfToken || '')}">`;
 
   const sourceBtn = hasSource
     ? `<form method="POST" action="/disconnect/source" style="display:inline">
+         ${csrf}
          <button type="submit" class="btn btn-secondary">Disconnect</button>
        </form>`
     : `<a href="/auth/source" class="btn btn-primary">Connect Source Account</a>`;
 
   const destBtn = hasDestination
     ? `<form method="POST" action="/disconnect/destination" style="display:inline">
+         ${csrf}
          <button type="submit" class="btn btn-secondary">Disconnect</button>
        </form>`
     : `<a href="/auth/destination" class="btn btn-primary${hasSource ? '' : ' btn-disabled'}"
@@ -255,6 +305,7 @@ function renderPage({ hasSource, hasDestination, state }) {
 
   const transferBtn = canTransfer && !isRunning
     ? `<form method="POST" action="/transfer">
+         ${csrf}
          <button type="submit" class="btn btn-success">▶ Start Transfer</button>
        </form>`
     : `<button class="btn btn-success btn-disabled" disabled>▶ Start Transfer</button>`;
@@ -272,6 +323,7 @@ function renderPage({ hasSource, hasDestination, state }) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="${escapeHtml(csrfToken || '')}">
   <title>YouTube Watch Later Transfer</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

@@ -44,6 +44,16 @@ afterEach(() => {
   transferState.clear();
 });
 
+/**
+ * Fetches the home page and extracts the CSRF token from the meta tag.
+ * Requires a persistent agent so the session cookie is maintained.
+ */
+async function getCsrfToken(agent) {
+  const home = await agent.get('/');
+  const match = home.text.match(/name="csrf-token" content="([^"]+)"/);
+  return match ? match[1] : '';
+}
+
 // ---------------------------------------------------------------------------
 // GET /
 // ---------------------------------------------------------------------------
@@ -149,8 +159,9 @@ describe('POST /disconnect/:account', () => {
   test('disconnecting source clears both accounts', async () => {
     const app = makeApp();
     const agent = await agentWithBothAccounts(app);
+    const csrf = await getCsrfToken(agent);
 
-    await agent.post('/disconnect/source');
+    await agent.post('/disconnect/source').send(`_csrf=${csrf}`).type('form');
     const home = await agent.get('/');
     expect(home.text).toContain('Connect Source Account');
     expect(home.text).toContain('btn-disabled'); // destination button disabled
@@ -159,11 +170,19 @@ describe('POST /disconnect/:account', () => {
   test('disconnecting destination leaves source intact', async () => {
     const app = makeApp();
     const agent = await agentWithBothAccounts(app);
+    const csrf = await getCsrfToken(agent);
 
-    await agent.post('/disconnect/destination');
+    await agent.post('/disconnect/destination').send(`_csrf=${csrf}`).type('form');
     const home = await agent.get('/');
     // Source still connected (Disconnect button shown), destination gone
     expect(home.text).toContain('Connect Destination Account');
+  });
+
+  test('returns 403 when CSRF token is missing', async () => {
+    const app = makeApp();
+    const agent = await agentWithBothAccounts(app);
+    const res = await agent.post('/disconnect/source');
+    expect(res.status).toBe(403);
   });
 });
 
@@ -173,9 +192,17 @@ describe('POST /disconnect/:account', () => {
 describe('POST /transfer', () => {
   test('redirects to / when accounts not connected', async () => {
     const app = makeApp();
-    const res = await request(app).post('/transfer');
+    const agent = request.agent(app);
+    const csrf = await getCsrfToken(agent);
+    const res = await agent.post('/transfer').send(`_csrf=${csrf}`).type('form');
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('/');
+  });
+
+  test('returns 403 when CSRF token is missing', async () => {
+    const app = makeApp();
+    const res = await request(app).post('/transfer');
+    expect(res.status).toBe(403);
   });
 
   test('starts transfer and redirects to / when both accounts connected', async () => {
@@ -187,8 +214,9 @@ describe('POST /transfer', () => {
     const agent = request.agent(app);
     await agent.get('/oauth2callback?code=s&state=source');
     await agent.get('/oauth2callback?code=d&state=destination');
+    const csrf = await getCsrfToken(agent);
 
-    const res = await agent.post('/transfer');
+    const res = await agent.post('/transfer').send(`_csrf=${csrf}`).type('form');
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('/');
   });
