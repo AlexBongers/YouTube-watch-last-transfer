@@ -17,24 +17,6 @@ function makePlaylistItemsListResponse(videoIds, nextPageToken = undefined) {
   };
 }
 
-function makeFakeAuth(listResponses, insertOk = true) {
-  let callCount = 0;
-  const fakeYoutube = {
-    playlistItems: {
-      list: jest.fn(async () => {
-        const response = listResponses[callCount] || makePlaylistItemsListResponse([]);
-        callCount++;
-        return response;
-      }),
-      insert: jest.fn(async ({ requestBody }) => {
-        if (!insertOk) throw new Error('API quota exceeded');
-        return { data: {} };
-      }),
-    },
-  };
-  return { fakeYoutube };
-}
-
 // We need to mock the googleapis module so we control the youtube client.
 jest.mock('googleapis', () => {
   const mockPlaylistItems = {
