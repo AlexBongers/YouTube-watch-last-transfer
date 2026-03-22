@@ -17,13 +17,32 @@ function makePlaylistItemsListResponse(videoIds, nextPageToken = undefined) {
   };
 }
 
+function makeChannelsListResponse(watchLaterPlaylistId) {
+  return {
+    data: {
+      items: [
+        {
+          contentDetails: {
+            relatedPlaylists: {
+              watchLater: watchLaterPlaylistId,
+            },
+          },
+        },
+      ],
+    },
+  };
+}
+
+const FAKE_WL_PLAYLIST_ID = 'PLxxxxxxxxxxxxxxxx';
+
 // We need to mock the googleapis module so we control the youtube client.
 jest.mock('googleapis', () => {
+  const mockChannels = { list: jest.fn() };
   const mockPlaylistItems = {
     list: jest.fn(),
     insert: jest.fn(),
   };
-  const mockYoutube = { playlistItems: mockPlaylistItems };
+  const mockYoutube = { channels: mockChannels, playlistItems: mockPlaylistItems };
   return {
     google: {
       youtube: jest.fn(() => mockYoutube),
@@ -42,6 +61,9 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 describe('getWatchLaterVideos', () => {
   test('returns all videos from a single page', async () => {
+    google.youtube().channels.list.mockResolvedValueOnce(
+      makeChannelsListResponse(FAKE_WL_PLAYLIST_ID)
+    );
     google.youtube().playlistItems.list.mockResolvedValueOnce(
       makePlaylistItemsListResponse(['aaa', 'bbb', 'ccc'])
     );
@@ -54,6 +76,9 @@ describe('getWatchLaterVideos', () => {
   });
 
   test('follows pagination and returns all videos across pages', async () => {
+    google.youtube().channels.list.mockResolvedValueOnce(
+      makeChannelsListResponse(FAKE_WL_PLAYLIST_ID)
+    );
     google.youtube().playlistItems.list
       .mockResolvedValueOnce(makePlaylistItemsListResponse(['v1', 'v2'], 'token1'))
       .mockResolvedValueOnce(makePlaylistItemsListResponse(['v3'], undefined));
@@ -69,6 +94,9 @@ describe('getWatchLaterVideos', () => {
   });
 
   test('returns empty array when Watch Later is empty', async () => {
+    google.youtube().channels.list.mockResolvedValueOnce(
+      makeChannelsListResponse(FAKE_WL_PLAYLIST_ID)
+    );
     google.youtube().playlistItems.list.mockResolvedValueOnce(
       makePlaylistItemsListResponse([])
     );
@@ -78,15 +106,29 @@ describe('getWatchLaterVideos', () => {
     expect(videos).toEqual([]);
   });
 
-  test('requests the correct playlist ID and part', async () => {
+  test('uses the real playlist ID from channel info, not the WL shorthand', async () => {
+    google.youtube().channels.list.mockResolvedValueOnce(
+      makeChannelsListResponse(FAKE_WL_PLAYLIST_ID)
+    );
     google.youtube().playlistItems.list.mockResolvedValueOnce(
       makePlaylistItemsListResponse([])
     );
 
     await getWatchLaterVideos({});
 
+    expect(google.youtube().channels.list).toHaveBeenCalledWith(
+      expect.objectContaining({ part: ['contentDetails'], mine: true })
+    );
     expect(google.youtube().playlistItems.list).toHaveBeenCalledWith(
-      expect.objectContaining({ playlistId: 'WL', part: ['snippet'] })
+      expect.objectContaining({ playlistId: FAKE_WL_PLAYLIST_ID, part: ['snippet'] })
+    );
+  });
+
+  test('throws when channel info does not contain a Watch Later playlist ID', async () => {
+    google.youtube().channels.list.mockResolvedValueOnce({ data: { items: [] } });
+
+    await expect(getWatchLaterVideos({})).rejects.toThrow(
+      'Could not retrieve Watch Later playlist ID from channel info.'
     );
   });
 });

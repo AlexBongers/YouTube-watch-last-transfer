@@ -8,6 +8,31 @@ const PAGE_SIZE = 50;
 const INSERT_DELAY_MS = 200;
 
 /**
+ * Resolves the authenticated user's actual Watch Later playlist ID.
+ *
+ * The YouTube Data API does not return items when `playlistId` is set to the
+ * generic "WL" shorthand. The real playlist ID must be retrieved from the
+ * channel's `contentDetails.relatedPlaylists.watchLater` field.
+ *
+ * @param {ReturnType<typeof google.youtube>} youtube Authenticated YouTube client.
+ * @returns {Promise<string>} The actual Watch Later playlist ID.
+ */
+async function resolveWatchLaterPlaylistId(youtube) {
+  const channelResponse = await youtube.channels.list({
+    part: ['contentDetails'],
+    mine: true,
+  });
+  const playlistId =
+    channelResponse.data.items &&
+    channelResponse.data.items[0] &&
+    channelResponse.data.items[0].contentDetails.relatedPlaylists.watchLater;
+  if (!playlistId) {
+    throw new Error('Could not retrieve Watch Later playlist ID from channel info.');
+  }
+  return playlistId;
+}
+
+/**
  * Retrieves all items from the authenticated user's Watch Later playlist.
  *
  * @param {import('google-auth-library').OAuth2Client} auth Authenticated OAuth2 client.
@@ -15,13 +40,14 @@ const INSERT_DELAY_MS = 200;
  */
 async function getWatchLaterVideos(auth) {
   const youtube = google.youtube({ version: 'v3', auth });
+  const playlistId = await resolveWatchLaterPlaylistId(youtube);
   const videos = [];
   let pageToken;
 
   do {
     const response = await youtube.playlistItems.list({
       part: ['snippet'],
-      playlistId: WATCH_LATER_PLAYLIST_ID,
+      playlistId,
       maxResults: PAGE_SIZE,
       pageToken,
     });

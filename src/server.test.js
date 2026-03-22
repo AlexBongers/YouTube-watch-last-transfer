@@ -7,8 +7,9 @@ const { createApp, transferState } = require('../src/server');
 // Mock googleapis so no real HTTP calls are made
 // ---------------------------------------------------------------------------
 jest.mock('googleapis', () => {
+  const mockChannels = { list: jest.fn() };
   const mockPlaylistItems = { list: jest.fn(), insert: jest.fn() };
-  const mockYoutube = { playlistItems: mockPlaylistItems };
+  const mockYoutube = { channels: mockChannels, playlistItems: mockPlaylistItems };
   return {
     google: {
       youtube: jest.fn(() => mockYoutube),
@@ -331,6 +332,11 @@ describe('POST /transfer', () => {
   });
 
   test('starts transfer and redirects to / when both accounts connected', async () => {
+    google.youtube().channels.list.mockResolvedValue({
+      data: {
+        items: [{ contentDetails: { relatedPlaylists: { watchLater: 'PLtest123' } } }],
+      },
+    });
     google.youtube().playlistItems.list.mockResolvedValue({
       data: { items: [], nextPageToken: undefined },
     });
