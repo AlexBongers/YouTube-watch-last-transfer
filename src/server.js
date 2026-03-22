@@ -79,6 +79,13 @@ function createApp(config) {
   };
   const { sessionSecret } = config;
 
+  // Use secure cookies when the app is running over HTTPS.
+  // On Render.com, NODE_ENV=production is set in render.yaml and Render always uses HTTPS.
+  // Locally (HTTP), secure is false so cookies work without TLS.
+  const secureCookie =
+    process.env.NODE_ENV === 'production' ||
+    (config.appUrl || '').startsWith('https');
+
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.urlencoded({ extended: false }));
@@ -89,11 +96,7 @@ function createApp(config) {
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
-        // Secure only when we know we're on HTTPS (either configured URL or forwarded proto)
-        get secure() {
-          const url = appConfig.appUrl || '';
-          return url.startsWith('https');
-        },
+        secure: secureCookie,
         sameSite: 'lax',
       },
     })
