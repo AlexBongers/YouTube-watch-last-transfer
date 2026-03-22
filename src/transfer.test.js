@@ -1,6 +1,6 @@
 'use strict';
 
-const { getWatchLaterVideos, addToWatchLater, sleep } = require('../src/transfer');
+const { getWatchLaterVideos, addToWatchLater, sleep } = require('./transfer');
 
 // Helpers to build fake YouTube API responses
 function makePlaylistItemsListResponse(videoIds, nextPageToken = undefined) {

@@ -3,23 +3,20 @@
 require('dotenv').config();
 
 const { createApp } = require('./src/server');
+const { loadCredentials } = require('./src/config');
 
 const port = parseInt(process.env.PORT || '3000', 10);
-const appUrl = process.env.APP_URL || `http://localhost:${port}`;
-const clientId = process.env.GOOGLE_CLIENT_ID;
-const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+const appUrl = process.env.APP_URL || null; // null = auto-detect from request
 const sessionSecret = process.env.SESSION_SECRET || 'change-me-in-production';
 
-if (!clientId || !clientSecret) {
-  console.error(
-    'Error: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables are required.\n' +
-    'Copy .env.example to .env and fill in your credentials.'
-  );
-  process.exit(1);
-}
+const { clientId, clientSecret } = loadCredentials();
 
 const app = createApp({ clientId, clientSecret, appUrl, sessionSecret });
 
 app.listen(port, () => {
-  console.log(`YouTube Watch Later Transfer running at ${appUrl}`);
+  const baseUrl = appUrl || `http://localhost:${port}`;
+  console.log(`YouTube Watch Later Transfer running at ${baseUrl}`);
+  if (!clientId || !clientSecret) {
+    console.log('⚠  Google credentials not configured. Visit the app to complete setup.');
+  }
 });

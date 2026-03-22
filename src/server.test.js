@@ -25,15 +25,30 @@ jest.mock('googleapis', () => {
   };
 });
 
+// Mock config module so tests don't write to disk
+jest.mock('../src/config', () => ({
+  saveCredentials: jest.fn().mockReturnValue(true),
+  loadCredentials: jest.fn().mockReturnValue({ clientId: null, clientSecret: null }),
+}));
+
 const { google } = require('googleapis');
 
 // ---------------------------------------------------------------------------
-// Test app factory — uses a fixed session secret so cookies work across calls
+// Test app factories
 // ---------------------------------------------------------------------------
 function makeApp() {
   return createApp({
     clientId: 'test-client-id',
     clientSecret: 'test-client-secret',
+    appUrl: 'http://localhost:3000',
+    sessionSecret: 'test-session-secret',
+  });
+}
+
+function makeAppWithoutCreds() {
+  return createApp({
+    clientId: null,
+    clientSecret: null,
     appUrl: 'http://localhost:3000',
     sessionSecret: 'test-session-secret',
   });
@@ -48,11 +63,121 @@ afterEach(() => {
  * Fetches the home page and extracts the CSRF token from the meta tag.
  * Requires a persistent agent so the session cookie is maintained.
  */
-async function getCsrfToken(agent) {
-  const home = await agent.get('/');
+async function getCsrfToken(agent, path = '/') {
+  const home = await agent.get(path);
   const match = home.text.match(/name="csrf-token" content="([^"]+)"/);
   return match ? match[1] : '';
 }
+
+// ---------------------------------------------------------------------------
+// Setup flow (no credentials configured)
+// ---------------------------------------------------------------------------
+describe('Setup flow — no credentials', () => {
+  test('GET / redirects to /setup when credentials not configured', async () => {
+    const app = makeAppWithoutCreds();
+    const res = await request(app).get('/');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/setup');
+  });
+
+  test('GET /auth/source redirects to /setup when credentials not configured', async () => {
+    const app = makeAppWithoutCreds();
+    const res = await request(app).get('/auth/source');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/setup');
+  });
+
+  test('GET /setup returns 200 with setup wizard content', async () => {
+    const app = makeAppWithoutCreds();
+    const res = await request(app).get('/setup');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('First-time Setup');
+    expect(res.text).toContain('/oauth2callback');
+    expect(res.text).toContain('Client ID');
+    expect(res.text).toContain('Client Secret');
+  });
+
+  test('GET /setup shows the correct redirect URI', async () => {
+    const app = makeAppWithoutCreds();
+    const res = await request(app).get('/setup');
+    expect(res.text).toContain('http://localhost:3000/oauth2callback');
+  });
+
+  test('POST /setup with valid credentials configures app and redirects to /', async () => {
+    const { saveCredentials } = require('../src/config');
+    const app = makeAppWithoutCreds();
+    const agent = request.agent(app);
+    const csrf = await getCsrfToken(agent, '/setup');
+
+    const res = await agent
+      .post('/setup')
+      .send(`_csrf=${csrf}&clientId=my-client-id&clientSecret=my-client-secret`)
+      .type('form');
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/');
+    expect(saveCredentials).toHaveBeenCalledWith('my-client-id', 'my-client-secret');
+  });
+
+  test('after POST /setup, GET / returns main app page', async () => {
+    const app = makeAppWithoutCreds();
+    const agent = request.agent(app);
+    const csrf = await getCsrfToken(agent, '/setup');
+
+    await agent
+      .post('/setup')
+      .send(`_csrf=${csrf}&clientId=my-client-id&clientSecret=my-client-secret`)
+      .type('form');
+
+    const home = await agent.get('/');
+    expect(home.status).toBe(200);
+    expect(home.text).toContain('Source Account');
+  });
+
+  test('POST /setup with missing clientId shows error', async () => {
+    const app = makeAppWithoutCreds();
+    const agent = request.agent(app);
+    const csrf = await getCsrfToken(agent, '/setup');
+
+    const res = await agent
+      .post('/setup')
+      .send(`_csrf=${csrf}&clientId=&clientSecret=some-secret`)
+      .type('form');
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('required');
+  });
+
+  test('POST /setup with missing clientSecret shows error', async () => {
+    const app = makeAppWithoutCreds();
+    const agent = request.agent(app);
+    const csrf = await getCsrfToken(agent, '/setup');
+
+    const res = await agent
+      .post('/setup')
+      .send(`_csrf=${csrf}&clientId=some-id&clientSecret=`)
+      .type('form');
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('required');
+  });
+
+  test('POST /setup returns 403 when CSRF token is missing', async () => {
+    const app = makeAppWithoutCreds();
+    const res = await request(app)
+      .post('/setup')
+      .send('clientId=x&clientSecret=y')
+      .type('form');
+    expect(res.status).toBe(403);
+  });
+
+  test('GET /setup redirects to / when credentials already configured', async () => {
+    const app = makeApp(); // has credentials
+    const res = await request(app).get('/setup');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // GET /

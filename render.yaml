@@ -8,11 +8,11 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: GOOGLE_CLIENT_ID
-        sync: false
-      - key: GOOGLE_CLIENT_SECRET
-        sync: false
       - key: SESSION_SECRET
         generateValue: true
-      - key: APP_URL
-        sync: false
+      # Optional: set these to persist credentials across server restarts.
+      # If not set, use the in-app setup wizard at /setup to configure them.
+      # - key: GOOGLE_CLIENT_ID
+      #   sync: false
+      # - key: GOOGLE_CLIENT_SECRET
+      #   sync: false
