@@ -1,0 +1,38 @@
+# Credentials and tokens
+client_secrets.json
+client_secret*.json
+token.json
+token.pickle
+*.token
+*.credentials
+
+# Environment configuration
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
